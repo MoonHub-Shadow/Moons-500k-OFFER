@@ -5,22 +5,18 @@ local Window = Rayfield:CreateWindow({
     LoadingTitle = "By Godlike",
     LoadingSubtitle = "MoonHub on top",
     Theme = "Serenity",
-    
     DisableRayfieldPrompts = false,
     DisableBuildWarnings = false,
-
     ConfigurationSaving = {
         Enabled = true,
         FolderName = nil,
         FileName = "Big Hub"
     },
-
     Discord = {
         Enabled = false,
         Invite = "noinvitelink",
         RememberJoins = true
     },
-
     KeySystem = false,
     KeySettings = {
         Title = "Untitled",
@@ -47,58 +43,87 @@ local TabAutoRebirth = Window:CreateTab("Auto Rebirth", "dumbbell")
 local Section = TabMain:CreateSection("Misc V1")
 
 -- Slider for Size Changer
+local SizeFlag = "Size"
+local AutoSizeActive = false
+local SizeLoop
+
 local SliderSize = TabMain:CreateSlider({
     Name = "Size Changer",
     Range = {1, 100},
     Increment = 1,
     Suffix = "Size",
     CurrentValue = 2,
-    Flag = "Size",
+    Flag = SizeFlag,
     Callback = function(Value)
         _G.AutoSize = Value
-        while _G.AutoSize do
-            game:GetService("ReplicatedStorage").rEvents.changeSpeedSizeRemote:InvokeServer("changeSize", Value)
-            task.wait(0.1)
+        -- Stop previous loop if running
+        if SizeLoop then
+            task.cancel(SizeLoop)
+        end
+        if _G.AutoSize then
+            SizeLoop = task.spawn(function()
+                while true do
+                    game:GetService("ReplicatedStorage").rEvents.changeSpeedSizeRemote:InvokeServer("changeSize", Value)
+                    task.wait(0.1)
+                end
+            end)
         end
     end
 })
 
 -- Slider for Speed Changer
+local SpeedFlag = "Speed"
+local AutoSpeedActive = false
+local SpeedLoop
+
 local SliderSpeed = TabMain:CreateSlider({
     Name = "Speed Changer",
     Range = {14, 100},
     Increment = 1,
     Suffix = "Speed",
     CurrentValue = 100,
-    Flag = "Speed",
+    Flag = SpeedFlag,
     Callback = function(Value)
         _G.AutoSpeed = Value
-        while _G.AutoSpeed do
-            local player = game.Players.LocalPlayer
-            if player.Character and player.Character:FindFirstChild("Humanoid") then
-                player.Character.Humanoid.WalkSpeed = _G.AutoSpeed
-            end
-            task.wait(0.1)
+        -- Stop previous loop if running
+        if SpeedLoop then
+            task.cancel(SpeedLoop)
+        end
+        if _G.AutoSpeed then
+            SpeedLoop = task.spawn(function()
+                while true do
+                    local player = game.Players.LocalPlayer
+                    if player.Character and player.Character:FindFirstChild("Humanoid") then
+                        player.Character.Humanoid.WalkSpeed = _G.AutoSpeed
+                    end
+                    task.wait(0.1)
+                end
+            end)
         end
     end,
 })
 
 -- Button to give gamepass
-local Button = TabMain:CreateButton({
+local ButtonGPG = TabMain:CreateButton({
     Name = "FREE AUTO LIFT GAMEPASS!!!",
     Callback = function()
         local gamepassFolder = game:GetService("ReplicatedStorage").gamepassIds
         local player = game:GetService("Players").LocalPlayer
+        local ownedPasses = player:FindFirstChild("ownedGamepasses")
+        if not ownedPasses then
+            ownedPasses = Instance.new("Folder", player)
+            ownedPasses.Name = "ownedGamepasses"
+        end
         for _, gamepass in pairs(gamepassFolder:GetChildren()) do
             local value = Instance.new("IntValue")
             value.Name = gamepass.Name
             value.Value = gamepass.Value
-            value.Parent = player.ownedGamepasses
+            value.Parent = ownedPasses
         end
     end,
 })
 
--- Create toggles for Auto Weight, Pushups, Handstands, and Situps
+-- Helper function for creating toggles
 local function createAutoActionToggle(tab, name)
     return tab:CreateToggle({
         Name = "Auto " .. name,
@@ -106,18 +131,26 @@ local function createAutoActionToggle(tab, name)
         Flag = "Auto" .. name,
         Callback = function(Value)
             _G["Auto" .. name] = Value
-            local tool = game.Players.LocalPlayer.Backpack:FindFirstChild(name)
+            local player = game.Players.LocalPlayer
+            local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
+            local tool = player.Backpack:FindFirstChild(name)
+            if not tool then return end
+
             if Value and tool then
-                game.Players.LocalPlayer.Character.Humanoid:EquipTool(tool)
-                while _G["Auto" .. name] do
-                    game:GetService("Players").LocalPlayer.muscleEvent:FireServer("rep")
-                    task.wait(0.001)
+                -- Equip tool
+                if humanoid then
+                    humanoid:EquipTool(tool)
                 end
+                -- Start auto action
+                _G["Auto" .. name .. "Loop"] = task.spawn(function()
+                    while _G["Auto" .. name] do
+                        game:GetService("Players").LocalPlayer.muscleEvent:FireServer("rep")
+                        task.wait(0.001)
+                    end
+                end)
             else
-                local character = game.Players.LocalPlayer.Character
-                if character:FindFirstChild(name) then
-                    character[name].Parent = game.Players.LocalPlayer.Backpack
-                end
+                -- Unequip and stop loop
+                _G["Auto" .. name] = false
             end
         end
     })
@@ -128,7 +161,7 @@ createAutoActionToggle(TabAutoWeight, "Pushups")
 createAutoActionToggle(TabAutoWeight, "Handstands")
 createAutoActionToggle(TabAutoWeight, "Situps")
 
--- Create a section for jungle machines
+-- Jungle Machines Section
 local SectionJungle = TabAutoWeight:CreateSection("Auto Jungle Machines")
 
 local function createJungleMachineToggle(tab, name, position)
@@ -139,12 +172,19 @@ local function createJungleMachineToggle(tab, name, position)
         Callback = function(Value)
             if Value then
                 task.spawn(function()
-                    while true do
-                        game.Players.LocalPlayer.Character:SetPrimaryPartCFrame(CFrame.new(position))
-                        game:GetService("ReplicatedStorage").rEvents.machineInteractRemote:InvokeServer("useMachine", workspace.machinesFolder[name].interactSeat)
+                    while _G["Jungle" .. name] do
+                        local player = game.Players.LocalPlayer
+                        if player.Character then
+                            player.Character:SetPrimaryPartCFrame(CFrame.new(position))
+                        end
+                        local remote = game:GetService("ReplicatedStorage").rEvents.machineInteractRemote
+                        remote:InvokeServer("useMachine", workspace.machinesFolder[name].interactSeat)
                         task.wait(0.1)
                     end
                 end)
+                _G["Jungle" .. name] = true
+            else
+                _G["Jungle" .. name] = false
             end
         end
     })
@@ -156,96 +196,111 @@ createJungleMachineToggle(TabAutoWeight, "Lift", Vector3.new(-8678.05566, 14.503
 
 local SectionMoreStuff = TabAutoWeight:CreateSection("Will add more stuff later")
 
--- Infinite rebirth logic
-local infiniteRebirthLoop
+-- Auto Rebirth (Infinite)
+local InfiniteRebirthLoop
+local RebirthActive = false
+local function setRebirthActive(state)
+    RebirthActive = state
+    if state then
+        InfiniteRebirthLoop = task.spawn(function()
+            while RebirthActive do
+                game:GetService("ReplicatedStorage").rEvents.rebirthRemote:InvokeServer("rebirthRequest")
+                task.wait(0.1)
+            end
+        end)
+    else
+        RebirthActive = false
+        if InfiniteRebirthLoop then
+            task.cancel(InfiniteRebirthLoop)
+            InfiniteRebirthLoop = nil
+        end
+    end
+end
 
 local ToggleAutoRebirth = TabAutoRebirth:CreateToggle({
    Name = "Auto Rebirth Infinite",
    CurrentValue = false,
    Flag = "Autorebirthinf",
    Callback = function(Value)
-      if Value then
-            infiniteRebirthLoop = task.spawn(function()
-                while true do
-                    game:GetService("ReplicatedStorage").rEvents.rebirthRemote:InvokeServer("rebirthRequest")
-                    task.wait(0.1)
-                end
-            end)
-        else
-            if infiniteRebirthLoop then
-                task.cancel(infiniteRebirthLoop)
-                infiniteRebirthLoop = nil
-            end
-        end
-    end
-})
-
-local ToggleFastRebirth = TabAutoRebirth:CreateToggle({
-   Name = "Fast Rebirth",
-   CurrentValue = false,
-   Flag = "FastRebirth",
-   Callback = function(Value)
-     local replicatedStorage = game:GetService("ReplicatedStorage")
-     local players = game:GetService("Players")
-     local localPlayer = players.LocalPlayer
-     
-     local function unequipAllPets()
-         local petsFolder = localPlayer.petsFolder
-         for _, petFolder in pairs(petsFolder:GetChildren()) do
-             if petFolder:IsA("Folder") then
-                 for _, pet in pairs(petFolder:GetChildren()) do
-                     replicatedStorage.rEvents.equipPetEvent:FireServer("unequipPet", pet)
-                 end
-             end
-         end
-         task.wait(0.1)
-     end
-     
-     local function equipPetByName(petName)
-         unequipAllPets()
-         task.wait(0.01)
-         for _, pet in pairs(localPlayer.petsFolder.Unique:GetChildren()) do
-             if pet.Name == petName then
-                 replicatedStorage.rEvents.equipPetEvent:FireServer("equipPet", pet)
-             end
-         end
-     end
-     
-     local function simulateKeyPress()
-         local virtualInputManager = game:GetService("VirtualInputManager")
-         virtualInputManager:SendKeyEvent(true, "E", false, game)
-         task.wait(0.1)
-         virtualInputManager:SendKeyEvent(false, "E", false, game)
-     end
-     
-     task.spawn(function()
-         while true do
-             if not Value then return end -- Break the loop if the toggle is off
-             
-             local rebirths = localPlayer.leaderstats.Rebirths.Value
-             local strengthThreshold = 10000 + (5000 * rebirths)
-     
-             if localPlayer.ultimatesFolder:FindFirstChild("Golden Rebirth") then
-                 local goldenRebirthValue = localPlayer.ultimatesFolder["Golden Rebirth"].Value
-                 strengthThreshold = math.floor(strengthThreshold * (1 - (goldenRebirthValue * 0.1)))
-             end
-
-             unequipAllPets()
-             task.wait(0.1)
-             equipPetByName("Swift Samurai")
-     
-             while localPlayer.leaderstats.Strength.Value < strengthThreshold do
-                 for _ = 1, 10 do
-                     localPlayer.muscleEvent:FireServer("rep")
-                 end
-                 task.wait()
-             end
-         end
-     end)
+       setRebirthActive(Value)
    end
 })
 
+-- Fast Rebirth
+local ButtonFastRebirth = TabMain:CreateButton({
+    Name = "Fast Rebirth",
+    Callback = function()
+        local localPlayer = game.Players.LocalPlayer
+        local replicatedStorage = game:GetService("ReplicatedStorage")
+        local petsFolder = localPlayer.petsFolder
 
+        -- Function to unequip all pets
+        local function unequipAllPets()
+            for _, petFolder in pairs(petsFolder:GetChildren()) do
+                if petFolder:IsA("Folder") then
+                    for _, pet in pairs(petFolder:GetChildren()) do
+                        replicatedStorage.rEvents.equipPetEvent:FireServer("unequipPet", pet)
+                    end
+                end
+            end
+            task.wait(0.1)
+        end
 
--- Ensure the script ends properly
+        -- Function to equip specific pet by name
+        local function equipPetByName(petName)
+            unequipAllPets()
+            task.wait(0.01)
+            for _, pet in pairs(petsFolder:FindFirstChild("Unique"):GetChildren()) do
+                if pet.Name == petName then
+                    replicatedStorage.rEvents.equipPetEvent:FireServer("equipPet", pet)
+                end
+            end
+        end
+
+        -- Function to simulate key press "E"
+        local function simulateKeyPress()
+            local virtualInputManager = game:GetService("VirtualInputManager")
+            virtualInputManager:SendKeyEvent(true, "E", false, game)
+            task.wait(0.1)
+            virtualInputManager:SendKeyEvent(false, "E", false, game)
+        end
+
+        -- Start the loop
+        task.spawn(function()
+            while true do
+                local rebirths = localPlayer.leaderstats.Rebirths.Value
+                local strengthThreshold = 10000 + (5000 * rebirths)
+
+                if localPlayer.ultimatesFolder:FindFirstChild("Golden Rebirth") then
+                    local goldenRebirthValue = localPlayer.ultimatesFolder["Golden Rebirth"].Value
+                    strengthThreshold = math.floor(strengthThreshold * (1 - (goldenRebirthValue * 0.1)))
+                end
+
+                unequipAllPets()
+                task.wait(0.1)
+                equipPetByName("Swift Samurai")
+
+                -- Repetition until condition met
+                while localPlayer.leaderstats.Strength.Value < strengthThreshold do
+                    for _ = 1, 10 do
+                        localPlayer.muscleEvent:FireServer("rep")
+                    end
+                    task.wait()
+                    if not _G["FastRebirthActive"] then break end
+                end
+
+                task.wait(1)
+            end
+        end)
+    end,
+})
+
+-- Anti AFK Button
+local AntiAFKButton = TabMain:CreateButton({
+    Name = "Anti AFK",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/evxncodes/mainroblox/main/anti-afk", true))()
+    end
+})
+
 print("Script loaded successfully!")
