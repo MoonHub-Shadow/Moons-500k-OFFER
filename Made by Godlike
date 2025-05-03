@@ -133,12 +133,11 @@ local function createAutoActionToggle(tab, name)
             _G["Auto" .. name] = Value
             local player = game.Players.LocalPlayer
             local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
-            local tool = player.Backpack:FindFirstChild(name)
-            if not tool then return end
+            local tool = player.Backpack:FindFirstChild(name) or player.Character:FindFirstChild(name) -- Check Character too
 
             if Value and tool then
                 -- Equip tool
-                if humanoid then
+                if humanoid and not tool.Parent:IsA("Character") then -- Only equip if not already equipped
                     humanoid:EquipTool(tool)
                 end
                 -- Start auto action
@@ -151,6 +150,14 @@ local function createAutoActionToggle(tab, name)
             else
                 -- Unequip and stop loop
                 _G["Auto" .. name] = false
+                if _G["Auto" .. name .. "Loop"] then
+                    task.cancel(_G["Auto" .. name .. "Loop"])
+                    _G["Auto" .. name .. "Loop"] = nil
+                end
+                if humanoid and tool and tool.Parent:IsA("Character") then
+                     -- Optional: Unequip the tool if you want it to go back to the backpack
+                     -- humanoid:UnequipTool(tool)
+                end
             end
         end
     })
@@ -165,26 +172,34 @@ createAutoActionToggle(TabAutoWeight, "Situps")
 local SectionJungle = TabAutoWeight:CreateSection("Auto Jungle Machines")
 
 local function createJungleMachineToggle(tab, name, position)
+    local machineLoop
     return tab:CreateToggle({
         Name = "Jungle Gym " .. name,
         CurrentValue = false,
         Flag = "Jungle" .. name,
         Callback = function(Value)
+            _G["Jungle" .. name] = Value
+            if machineLoop then
+                task.cancel(machineLoop)
+                machineLoop = nil
+            end
             if Value then
-                task.spawn(function()
+                machineLoop = task.spawn(function()
                     while _G["Jungle" .. name] do
                         local player = game.Players.LocalPlayer
                         if player.Character then
                             player.Character:SetPrimaryPartCFrame(CFrame.new(position))
                         end
                         local remote = game:GetService("ReplicatedStorage").rEvents.machineInteractRemote
-                        remote:InvokeServer("useMachine", workspace.machinesFolder[name].interactSeat)
+                        local success, err = pcall(function()
+                            remote:InvokeServer("useMachine", workspace.machinesFolder[name].interactSeat)
+                        end)
+                         if not success then
+                             warn("Error invoking machineInteractRemote:", err)
+                         end
                         task.wait(0.1)
                     end
                 end)
-                _G["Jungle" .. name] = true
-            else
-                _G["Jungle" .. name] = false
             end
         end
     })
@@ -204,7 +219,12 @@ local function setRebirthActive(state)
     if state then
         InfiniteRebirthLoop = task.spawn(function()
             while RebirthActive do
-                game:GetService("ReplicatedStorage").rEvents.rebirthRemote:InvokeServer("rebirthRequest")
+                local success, err = pcall(function()
+                    game:GetService("ReplicatedStorage").rEvents.rebirthRemote:InvokeServer("rebirthRequest")
+                end)
+                 if not success then
+                     warn("Error invoking rebirthRemote:", err)
+                 end
                 task.wait(0.1)
             end
         end)
@@ -220,78 +240,129 @@ end
 local ToggleAutoRebirth = TabAutoRebirth:CreateToggle({
    Name = "Auto Rebirth Infinite",
    CurrentValue = false,
-   Flag = "Autorebirthinf",
+   Flag = "Autorebirthing",
    Callback = function(Value)
        setRebirthActive(Value)
    end
 })
 
 -- Fast Rebirth
-local ButtonFastRebirth = TabMain:CreateButton({
-    Name = "Fast Rebirth",
-    Callback = function()
-        local localPlayer = game.Players.LocalPlayer
-        local replicatedStorage = game:GetService("ReplicatedStorage")
-        local petsFolder = localPlayer.petsFolder
+local FastRebirthLoop
+local FastRebirthActive = false
+local ToggleFastRebirth = TabAutoRebirth:CreateToggle({
+Name = "Auto Fast Rebirth",
+CurrentValue = false, -- Added missing comma
+Flag = "AutoFastRebirth",
+Callback = function(Value)
+        FastRebirthActive = Value
+        if FastRebirthLoop then
+            task.cancel(FastRebirthLoop)
+            FastRebirthLoop = nil
+        end
 
-        -- Function to unequip all pets
-        local function unequipAllPets()
-            for _, petFolder in pairs(petsFolder:GetChildren()) do
-                if petFolder:IsA("Folder") then
-                    for _, pet in pairs(petFolder:GetChildren()) do
-                        replicatedStorage.rEvents.equipPetEvent:FireServer("unequipPet", pet)
+        if Value then
+            FastRebirthLoop = task.spawn(function()
+                local localPlayer = game.Players.LocalPlayer
+                local replicatedStorage = game:GetService("ReplicatedStorage")
+                local petsFolder = localPlayer:FindFirstChild("petsFolder") -- Use FindFirstChild
+
+                if not petsFolder then
+                    warn("petsFolder not found for the local player.")
+                    return -- Stop the loop if petsFolder is missing
+                end
+
+                -- Function to unequip all pets
+                local function unequipAllPets()
+                    if petsFolder then
+                        for _, petFolder in pairs(petsFolder:GetChildren()) do
+                            if petFolder:IsA("Folder") then
+                                for _, pet in pairs(petFolder:GetChildren()) do
+                                    local success, err = pcall(function()
+                                        replicatedStorage.rEvents.equipPetEvent:FireServer("unequipPet", pet)
+                                    end)
+                                     if not success then
+                                         warn("Error unequipping pet:", err)
+                                     end
+                                end
+                            end
+                        end
+                    end
+                    task.wait(0.1)
+                end
+
+                -- Function to equip specific pet by name
+                local function equipPetByName(petName)
+                    unequipAllPets()
+                    task.wait(0.01)
+                    if petsFolder and petsFolder:FindFirstChild("Unique") then
+                        for _, pet in pairs(petsFolder:FindFirstChild("Unique"):GetChildren()) do
+                            if pet.Name == petName then
+                                 local success, err = pcall(function()
+                                     replicatedStorage.rEvents.equipPetEvent:FireServer("equipPet", pet)
+                                 end)
+                                  if not success then
+                                      warn("Error equipping pet:", err)
+                                  end
+                                break -- Stop after finding and equipping the pet
+                            end
+                        end
                     end
                 end
-            end
-            task.wait(0.1)
-        end
 
-        -- Function to equip specific pet by name
-        local function equipPetByName(petName)
-            unequipAllPets()
-            task.wait(0.01)
-            for _, pet in pairs(petsFolder:FindFirstChild("Unique"):GetChildren()) do
-                if pet.Name == petName then
-                    replicatedStorage.rEvents.equipPetEvent:FireServer("equipPet", pet)
-                end
-            end
-        end
-
-        -- Function to simulate key press "E"
-        local function simulateKeyPress()
-            local virtualInputManager = game:GetService("VirtualInputManager")
-            virtualInputManager:SendKeyEvent(true, "E", false, game)
-            task.wait(0.1)
-            virtualInputManager:SendKeyEvent(false, "E", false, game)
-        end
-
-        -- Start the loop
-        task.spawn(function()
-            while true do
-                local rebirths = localPlayer.leaderstats.Rebirths.Value
-                local strengthThreshold = 10000 + (5000 * rebirths)
-
-                if localPlayer.ultimatesFolder:FindFirstChild("Golden Rebirth") then
-                    local goldenRebirthValue = localPlayer.ultimatesFolder["Golden Rebirth"].Value
-                    strengthThreshold = math.floor(strengthThreshold * (1 - (goldenRebirthValue * 0.1)))
+                -- Function to simulate key press "E" (Less reliable in exploits, consider alternative methods if possible)
+                local function simulateKeyPress()
+                    local virtualInputManager = game:GetService("VirtualInputManager")
+                    virtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game) -- Use Enum.KeyCode
+                    task.wait(0.1)
+                    virtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
                 end
 
-                unequipAllPets()
-                task.wait(0.1)
-                equipPetByName("Swift Samurai")
+                -- Start the loop
+                while FastRebirthActive do
+                     if not localPlayer or not localPlayer.leaderstats or not localPlayer.leaderstats:FindFirstChild("Rebirths") or not localPlayer.leaderstats:FindFirstChild("Strength") then
+                         warn("Player or leaderstats not found, stopping Fast Rebirth.")
+                         FastRebirthActive = false -- Stop the loop
+                         break
+                     end
 
-                -- Repetition until condition met
-                while localPlayer.leaderstats.Strength.Value < strengthThreshold do
-                    for _ = 1, 10 do
-                        localPlayer.muscleEvent:FireServer("rep")
+                    local rebirths = localPlayer.leaderstats.Rebirths.Value
+                    local strengthThreshold = 10000 + (5000 * rebirths)
+
+                    if localPlayer.ultimatesFolder and localPlayer.ultimatesFolder:FindFirstChild("Golden Rebirth") then
+                        local goldenRebirthValue = localPlayer.ultimatesFolder["Golden Rebirth"].Value
+                        strengthThreshold = math.floor(strengthThreshold * (1 - (goldenRebirthValue * 0.1)))
                     end
-                    task.wait()
-                    if not _G["FastRebirthActive"] then break end
-                end
 
-                task.wait(1)
-            end
-        end)
+                    unequipAllPets()
+                    task.wait(0.1)
+                    equipPetByName("Swift Samurai")
+
+                    -- Repetition until condition met
+                    while localPlayer.leaderstats.Strength.Value < strengthThreshold and FastRebirthActive do
+                        for _ = 1, 10 do
+                             local success, err = pcall(function()
+                                 localPlayer.muscleEvent:FireServer("rep")
+                             end)
+                              if not success then
+                                  warn("Error firing muscleEvent:", err)
+                              end
+                        end
+                        task.wait()
+                    end
+
+                    if not FastRebirthActive then break end -- Check again before rebirthing
+
+                    task.wait(1) -- Wait before attempting rebirth
+                    local success, err = pcall(function()
+                         game:GetService("ReplicatedStorage").rEvents.rebirthRemote:InvokeServer("rebirthRequest")
+                    end)
+                     if not success then
+                         warn("Error invoking rebirthRemote:", err)
+                     end
+                    task.wait(2) -- Wait after rebirthing
+                end
+            end)
+        end
     end,
 })
 
