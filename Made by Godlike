@@ -44,8 +44,7 @@ local Section = TabMain:CreateSection("Misc V1")
 
 -- Slider for Size Changer
 local SizeFlag = "Size"
-local AutoSizeActive = false
-local SizeLoop
+local SizeLoop = nil -- Initialize loop variable
 
 local SliderSize = TabMain:CreateSlider({
     Name = "Size Changer",
@@ -55,14 +54,16 @@ local SliderSize = TabMain:CreateSlider({
     CurrentValue = 2,
     Flag = SizeFlag,
     Callback = function(Value)
-        _G.AutoSize = Value
-        -- Stop previous loop if running
+        -- Always stop the previous loop when the slider value changes
         if SizeLoop then
             task.cancel(SizeLoop)
+            SizeLoop = nil
         end
-        if _G.AutoSize then
+
+        -- Start a new loop if the value is greater than 0 (or any condition you want for activation)
+        if Value > 0 then -- Assuming size 0 means no change, adjust if needed
             SizeLoop = task.spawn(function()
-                while true do
+                while SizeLoop do -- Loop as long as SizeLoop is not nil (meaning it's active)
                     game:GetService("ReplicatedStorage").rEvents.changeSpeedSizeRemote:InvokeServer("changeSize", Value)
                     task.wait(0.1)
                 end
@@ -73,8 +74,7 @@ local SliderSize = TabMain:CreateSlider({
 
 -- Slider for Speed Changer
 local SpeedFlag = "Speed"
-local AutoSpeedActive = false
-local SpeedLoop
+local SpeedLoop = nil -- Initialize loop variable
 
 local SliderSpeed = TabMain:CreateSlider({
     Name = "Speed Changer",
@@ -84,17 +84,19 @@ local SliderSpeed = TabMain:CreateSlider({
     CurrentValue = 100,
     Flag = SpeedFlag,
     Callback = function(Value)
-        _G.AutoSpeed = Value
-        -- Stop previous loop if running
+        -- Always stop the previous loop when the slider value changes
         if SpeedLoop then
             task.cancel(SpeedLoop)
+            SpeedLoop = nil
         end
-        if _G.AutoSpeed then
+
+        -- Start a new loop if the value is greater than the default walkspeed (or any condition)
+        if Value > 16 then -- Assuming default walkspeed is 16, adjust if needed
             SpeedLoop = task.spawn(function()
-                while true do
+                while SpeedLoop do -- Loop as long as SpeedLoop is not nil
                     local player = game.Players.LocalPlayer
                     if player.Character and player.Character:FindFirstChild("Humanoid") then
-                        player.Character.Humanoid.WalkSpeed = _G.AutoSpeed
+                        player.Character.Humanoid.WalkSpeed = Value -- Use the direct Value from the slider
                     end
                     task.wait(0.1)
                 end
@@ -111,52 +113,72 @@ local ButtonGPG = TabMain:CreateButton({
         local player = game:GetService("Players").LocalPlayer
         local ownedPasses = player:FindFirstChild("ownedGamepasses")
         if not ownedPasses then
-            ownedPasses = Instance.new("Folder", player)
+            ownedPasses = Instance.new("Folder")
             ownedPasses.Name = "ownedGamepasses"
+            ownedPasses.Parent = player -- Parent after setting name
         end
         for _, gamepass in pairs(gamepassFolder:GetChildren()) do
-            local value = Instance.new("IntValue")
-            value.Name = gamepass.Name
-            value.Value = gamepass.Value
-            value.Parent = ownedPasses
+            -- Check if the gamepass already exists to prevent duplicates
+            if not ownedPasses:FindFirstChild(gamepass.Name) then
+                local value = Instance.new("IntValue")
+                value.Name = gamepass.Name
+                value.Value = gamepass.Value
+                value.Parent = ownedPasses
+            end
         end
     end,
 })
 
 -- Helper function for creating toggles
 local function createAutoActionToggle(tab, name)
+    local autoActionLoop = nil -- Initialize loop variable for each toggle
+
     return tab:CreateToggle({
         Name = "Auto " .. name,
         CurrentValue = false,
         Flag = "Auto" .. name,
         Callback = function(Value)
-            _G["Auto" .. name] = Value
-            local player = game.Players.LocalPlayer
-            local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
-            local tool = player.Backpack:FindFirstChild(name) or player.Character:FindFirstChild(name) -- Check Character too
+            if autoActionLoop then
+                task.cancel(autoActionLoop)
+                autoActionLoop = nil
+            end
 
-            if Value and tool then
-                -- Equip tool
-                if humanoid and not tool.Parent:IsA("Character") then -- Only equip if not already equipped
-                    humanoid:EquipTool(tool)
-                end
-                -- Start auto action
-                _G["Auto" .. name .. "Loop"] = task.spawn(function()
-                    while _G["Auto" .. name] do
-                        game:GetService("Players").LocalPlayer.muscleEvent:FireServer("rep")
-                        task.wait(0.001)
+            if Value then
+                local player = game.Players.LocalPlayer
+                local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
+                local tool = player.Backpack:FindFirstChild(name) or (player.Character and player.Character:FindFirstChild(name)) -- Check Character too
+
+                if tool then
+                    -- Equip tool if not already equipped
+                    if humanoid and not tool.Parent:IsA("Character") then
+                        humanoid:EquipTool(tool)
                     end
-                end)
-            else
-                -- Unequip and stop loop
-                _G["Auto" .. name] = false
-                if _G["Auto" .. name .. "Loop"] then
-                    task.cancel(_G["Auto" .. name .. "Loop"])
-                    _G["Auto" .. name .. "Loop"] = nil
-                end
-                if humanoid and tool and tool.Parent:IsA("Character") then
-                     -- Optional: Unequip the tool if you want it to go back to the backpack
-                     -- humanoid:UnequipTool(tool)
+                    -- Start auto action
+                    autoActionLoop = task.spawn(function()
+                        while autoActionLoop do -- Loop as long as autoActionLoop is not nil
+                            -- Ensure the tool is still equipped before firing
+                            if player.Character and player.Character:FindFirstChild(name) then
+                                game:GetService("Players").LocalPlayer.muscleEvent:FireServer("rep")
+                            else
+                                -- Tool unequipped, stop the loop
+                                break
+                            end
+                            task.wait(0.001)
+                        end
+                         -- If the loop stops naturally (e.g., tool unequipped), uncheck the toggle
+                        if autoActionLoop then
+                            autoActionLoop = nil
+                            -- You might want to update the UI toggle state here if Rayfield supports it
+                            -- For example: Rayfield.SetToggleValue("Auto" .. name, false)
+                        end
+                    end)
+                else
+                    warn("Tool '" .. name .. "' not found in Backpack or Character.")
+                     -- If tool not found, uncheck the toggle
+                     if autoActionLoop then
+                         autoActionLoop = nil
+                         -- You might want to update the UI toggle state here
+                     end
                 end
             end
         end
@@ -172,32 +194,65 @@ createAutoActionToggle(TabAutoWeight, "Situps")
 local SectionJungle = TabAutoWeight:CreateSection("Auto Jungle Machines")
 
 local function createJungleMachineToggle(tab, name, position)
-    local machineLoop
+    local machineLoop = nil -- Initialize loop variable for each machine
+
     return tab:CreateToggle({
         Name = "Jungle Gym " .. name,
         CurrentValue = false,
         Flag = "Jungle" .. name,
         Callback = function(Value)
-            _G["Jungle" .. name] = Value
             if machineLoop then
                 task.cancel(machineLoop)
                 machineLoop = nil
             end
+
             if Value then
                 machineLoop = task.spawn(function()
-                    while _G["Jungle" .. name] do
-                        local player = game.Players.LocalPlayer
+                    local player = game.Players.LocalPlayer
+                    local machine = workspace.machinesFolder:FindFirstChild(name) -- Find the machine once
+
+                    if not machine then
+                        warn("Jungle machine '" .. name .. "' not found.")
+                         -- If machine not found, stop the loop and uncheck toggle
+                         if machineLoop then
+                             task.cancel(machineLoop)
+                             machineLoop = nil
+                             -- Update UI toggle state
+                         end
+                        return
+                    end
+
+                    local interactSeat = machine:FindFirstChild("interactSeat")
+                     if not interactSeat then
+                         warn("Interact seat not found for machine '" .. name .. "'.")
+                         -- Stop loop and uncheck toggle
+                         if machineLoop then
+                             task.cancel(machineLoop)
+                             machineLoop = nil
+                             -- Update UI toggle state
+                         end
+                         return
+                     end
+
+                    while machineLoop do -- Loop as long as machineLoop is not nil
                         if player.Character then
-                            player.Character:SetPrimaryPartCFrame(CFrame.new(position))
+                            -- Teleport to the seat CFrame for better positioning
+                            player.Character:SetPrimaryPartCFrame(interactSeat.CFrame * CFrame.new(0, 1, 0)) -- Adjust Y offset as needed
                         end
+
                         local remote = game:GetService("ReplicatedStorage").rEvents.machineInteractRemote
                         local success, err = pcall(function()
-                            remote:InvokeServer("useMachine", workspace.machinesFolder[name].interactSeat)
+                            remote:InvokeServer("useMachine", interactSeat)
                         end)
                          if not success then
                              warn("Error invoking machineInteractRemote:", err)
                          end
                         task.wait(0.1)
+                    end
+                    -- If the loop stops naturally, uncheck the toggle
+                    if machineLoop then
+                        machineLoop = nil
+                        -- Update UI toggle state
                     end
                 end)
             end
@@ -212,13 +267,16 @@ createJungleMachineToggle(TabAutoWeight, "Lift", Vector3.new(-8678.05566, 14.503
 local SectionMoreStuff = TabAutoWeight:CreateSection("Will add more stuff later")
 
 -- Auto Rebirth (Infinite)
-local InfiniteRebirthLoop
-local RebirthActive = false
+local InfiniteRebirthLoop = nil
 local function setRebirthActive(state)
-    RebirthActive = state
+    if InfiniteRebirthLoop then
+        task.cancel(InfiniteRebirthLoop)
+        InfiniteRebirthLoop = nil
+    end
+
     if state then
         InfiniteRebirthLoop = task.spawn(function()
-            while RebirthActive do
+            while InfiniteRebirthLoop do
                 local success, err = pcall(function()
                     game:GetService("ReplicatedStorage").rEvents.rebirthRemote:InvokeServer("rebirthRequest")
                 end)
@@ -227,13 +285,12 @@ local function setRebirthActive(state)
                  end
                 task.wait(0.1)
             end
+             -- If loop stops naturally, uncheck the toggle
+             if InfiniteRebirthLoop then
+                 InfiniteRebirthLoop = nil
+                 -- Update UI toggle state
+             end
         end)
-    else
-        RebirthActive = false
-        if InfiniteRebirthLoop then
-            task.cancel(InfiniteRebirthLoop)
-            InfiniteRebirthLoop = nil
-        end
     end
 end
 
@@ -247,111 +304,144 @@ local ToggleAutoRebirth = TabAutoRebirth:CreateToggle({
 })
 
 -- Fast Rebirth
-local FastRebirthLoop
-local FastRebirthActive = false
+local FastRebirthLoop = nil
 local ToggleFastRebirth = TabAutoRebirth:CreateToggle({
-Name = "Auto Fast Rebirth",
-CurrentValue = false, -- Added missing comma
-Flag = "AutoFastRebirth",
-Callback = function(Value)
-        FastRebirthActive = Value
+    Name = "Auto Fast Rebirth",
+    CurrentValue = false,
+    Flag = "AutoFastRebirth",
+    Callback = function(Value)
         if FastRebirthLoop then
             task.cancel(FastRebirthLoop)
             FastRebirthLoop = nil
         end
 
         if Value then
-            local replicatedStorage = game:GetService("ReplicatedStorage")
-local players = game:GetService("Players")
-local localPlayer = players.LocalPlayer
- 
-local function unequipAllPets()
-    local petsFolder = localPlayer.petsFolder
-    for _, petFolder in pairs(petsFolder:GetChildren()) do
-        if petFolder:IsA("Folder") then
-            for _, pet in pairs(petFolder:GetChildren()) do
-                replicatedStorage.rEvents.equipPetEvent:FireServer("unequipPet", pet)
-            end
-        end
-    end
-    task.wait(0.1)
-end
- 
-local function equipPetByName(petName)
-    unequipAllPets()
-    task.wait(0.01)
-    for _, pet in pairs(localPlayer.petsFolder.Unique:GetChildren()) do
-        if pet.Name == petName then
-            replicatedStorage.rEvents.equipPetEvent:FireServer("equipPet", pet)
-        end
-    end
-end
- 
-local function findMachine(machineName)
-    local machine = workspace.machinesFolder:FindFirstChild(machineName)
-    if not machine then
-        for _, folder in pairs(workspace:GetChildren()) do
-            if folder:IsA("Folder") and folder.Name:find("machines") then
-                machine = folder:FindFirstChild(machineName)
-                if machine then
-                    break
+            FastRebirthLoop = task.spawn(function()
+                local replicatedStorage = game:GetService("ReplicatedStorage")
+                local players = game:GetService("Players")
+                local localPlayer = players.LocalPlayer
+
+                local function unequipAllPets()
+                    local petsFolder = localPlayer:FindFirstChild("petsFolder")
+                    if petsFolder then
+                        for _, petFolder in pairs(petsFolder:GetChildren()) do
+                            if petFolder:IsA("Folder") then
+                                for _, pet in pairs(petFolder:GetChildren()) do
+                                    pcall(function() replicatedStorage.rEvents.equipPetEvent:FireServer("unequipPet", pet) end)
+                                end
+                            end
+                        end
+                        task.wait(0.1)
+                    end
                 end
-            end
+
+                local function equipPetByName(petName)
+                    unequipAllPets()
+                    task.wait(0.01)
+                    local uniquePetsFolder = localPlayer:FindFirstChild("petsFolder") and localPlayer.petsFolder:FindFirstChild("Unique")
+                    if uniquePetsFolder then
+                        for _, pet in pairs(uniquePetsFolder:GetChildren()) do
+                            if pet.Name == petName then
+                                pcall(function() replicatedStorage.rEvents.equipPetEvent:FireServer("equipPet", pet) end)
+                                break -- Found and equipped, exit the inner loop
+                            end
+                        end
+                    end
+                end
+
+                local function findMachine(machineName)
+                    local machine = workspace.machinesFolder:FindFirstChild(machineName)
+                    if not machine then
+                        for _, folder in pairs(workspace:GetChildren()) do
+                            if folder:IsA("Folder") and folder.Name:find("machines") then
+                                machine = folder:FindFirstChild(machineName)
+                                if machine then
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    return machine
+                end
+
+                local function simulateKeyPress()
+                    local virtualInputManager = game:GetService("VirtualInputManager")
+                    virtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game) -- Use Enum.KeyCode
+                    task.wait(0.1)
+                    virtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game) -- Use Enum.KeyCode
+                end
+
+                while FastRebirthLoop do -- Loop as long as FastRebirthLoop is not nil
+                    local leaderstats = localPlayer:FindFirstChild("leaderstats")
+                    if not leaderstats or not leaderstats:FindFirstChild("Rebirths") or not leaderstats:FindFirstChild("Strength") then
+                        warn("Leaderstats or required values not found for Fast Rebirth.")
+                        task.wait(1) -- Wait a bit before checking again
+                        continue
+                    end
+
+                    local rebirths = leaderstats.Rebirths.Value
+                    local strengthThreshold = 10000 + (5000 * rebirths)
+
+                    local ultimatesFolder = localPlayer:FindFirstChild("ultimatesFolder")
+                    if ultimatesFolder and ultimatesFolder:FindFirstChild("Golden Rebirth") then
+                        local goldenRebirthValueObject = ultimatesFolder["Golden Rebirth"]
+                        if goldenRebirthValueObject and goldenRebirthValueObject:IsA("IntValue") then
+                            local goldenRebirthValue = goldenRebirthValueObject.Value
+                             -- Ensure goldenRebirthValue is a number before multiplication
+                            if type(goldenRebirthValue) == 'number' then
+                                strengthThreshold = math.floor(strengthThreshold * (1 - (goldenRebirthValue * 0.1)))
+                            end
+                        end
+                    end
+
+                    unequipAllPets()
+                    task.wait(0.1)
+                    equipPetByName("Swift Samurai")
+
+                    while FastRebirthLoop and localPlayer.leaderstats.Strength.Value < strengthThreshold do
+                        pcall(function() localPlayer.muscleEvent:FireServer("rep") end) -- Use pcall
+                        task.wait()
+                    end
+
+                    if not FastRebirthLoop then break end -- Check if toggle was turned off
+
+                    unequipAllPets()
+                    task.wait(0.1)
+                    equipPetByName("Tribal Overlord")
+
+                    local jungleBarLift = findMachine("Jungle Bar Lift")
+                    if jungleBarLift and jungleBarLift:FindFirstChild("interactSeat") then
+                        localPlayer.Character.HumanoidRootPart.CFrame = jungleBarLift.interactSeat.CFrame * CFrame.new(0, 3, 0)
+                        repeat
+                            task.wait(0.1)
+                            simulateKeyPress()
+                        until not FastRebirthLoop or (localPlayer.Character and localPlayer.Character.Humanoid and localPlayer.Character.Humanoid.Sit) -- Check toggle state and if character is sitting
+
+                        if not FastRebirthLoop then break end -- Check if toggle was turned off
+                    else
+                         warn("Jungle Bar Lift machine or seat not found for Fast Rebirth.")
+                         -- Continue the loop, maybe try again or handle this case
+                         task.wait(1)
+                         continue
+                    end
+
+                    local initialRebirths = localPlayer.leaderstats.Rebirths.Value
+                    repeat
+                        pcall(function() replicatedStorage.rEvents.rebirthRemote:InvokeServer("rebirthRequest") end) -- Use pcall
+                        task.wait(0.1)
+                    until not FastRebirthLoop or localPlayer.leaderstats.Rebirths.Value > initialRebirths -- Check toggle state and if rebirth occurred
+
+                    if not FastRebirthLoop then break end -- Check if toggle was turned off
+
+                    task.wait()
+                end
+                 -- If the loop stops naturally, uncheck the toggle
+                 if FastRebirthLoop then
+                     FastRebirthLoop = nil
+                     -- Update UI toggle state
+                 end
+            end)
         end
-    end
-    return machine
-end
- 
-local function simulateKeyPress()
-    local virtualInputManager = game:GetService("VirtualInputManager")
-    virtualInputManager:SendKeyEvent(true, "E", false, game)
-    task.wait(0.1)
-    virtualInputManager:SendKeyEvent(false, "E", false, game)
-end
- 
-task.spawn(function()
-    while true do
-        local rebirths = localPlayer.leaderstats.Rebirths.Value
-        local strengthThreshold = 10000 + (5000 * rebirths)
- 
-        if localPlayer.ultimatesFolder:FindFirstChild("Golden Rebirth") then
-            local goldenRebirthValue = localPlayer.ultimatesFolder["Golden Rebirth"].Value
-            strengthThreshold = math.floor(strengthThreshold * (1 - (goldenRebirthValue * 0.1)))
-        end
- 
-        unequipAllPets()
-        task.wait(0.1)
-        equipPetByName("Swift Samurai")
- 
-        while localPlayer.leaderstats.Strength.Value < strengthThreshold do
-            for _ = 1, 10 do
-                localPlayer.muscleEvent:FireServer("rep")
-            end
-            task.wait()
-        end
- 
-        unequipAllPets()
-        task.wait(0.1)
-        equipPetByName("Tribal Overlord")
- 
-        local jungleBarLift = findMachine("Jungle Bar Lift")
-        if jungleBarLift and jungleBarLift:FindFirstChild("interactSeat") then
-            localPlayer.Character.HumanoidRootPart.CFrame = jungleBarLift.interactSeat.CFrame * CFrame.new(0, 3, 0)
-            repeat
-                task.wait(0.1)
-                simulateKeyPress()
-            until localPlayer.Character.Humanoid.Sit
-        end
- 
-        local initialRebirths = localPlayer.leaderstats.Rebirths.Value
-        repeat
-            replicatedStorage.rEvents.rebirthRemote:InvokeServer("rebirthRequest")
-            task.wait(0.1)
-        until localPlayer.leaderstats.Rebirths.Value > initialRebirths
- 
-        task.wait()
-    end
-end)
     end,
 })
 
